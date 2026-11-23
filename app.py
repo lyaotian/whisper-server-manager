@@ -39,7 +39,7 @@ from urllib.parse import quote
 
 import httpx
 from fastapi import (Depends, FastAPI, File, Form, Header, HTTPException,
-                     Request, Response, UploadFile)
+                     Query, Request, Response, UploadFile)
 from fastapi.responses import HTMLResponse
 
 # ---------------- 配置（可用环境变量覆盖） ----------------
@@ -665,7 +665,13 @@ def describe(row: dict) -> dict:
 @app.post("/v1/jobs", status_code=202, dependencies=[Depends(check_key)])
 def create_job(response: Response,
                file: UploadFile = File(...),
-               language: str = Form(DEFAULT_LANGUAGE)):
+               language: str = Form(DEFAULT_LANGUAGE),
+               original_filename: str = Form("")):
+    # The multipart file-part filename may be corrupted by Android's native
+    # encoder. Prefer the UTF-8 text field, while retaining compatibility with
+    # clients that only send the file and language fields.
+    submitted_name = original_filename.strip() or file.filename or "input.mp3"
+    submitted_name = submitted_name.replace("\\", "/").rsplit("/", 1)[-1]
     ext = Path(file.filename or "").suffix.lower()
     if ext not in ALLOWED_EXT:
         raise HTTPException(415, f"unsupported file type: {ext or '(none)'}")
@@ -686,7 +692,7 @@ def create_job(response: Response,
             os.fsync(out.fileno())       # 确保文件落盘后再入库，崩溃后不会出现"有记录无文件"
         duration = probe_duration(job_dir / f"input{ext}")
         outcome = store.add(
-            job_id, file.filename or f"input{ext}", language, size, duration,
+            job_id, submitted_name or f"input{ext}", language, size, duration,
             digest.hexdigest(), recognition_config_key(), MAX_QUEUE)
         if outcome == "full":
             raise HTTPException(429, "queue is full, try again later")
@@ -695,6 +701,60 @@ def create_job(response: Response,
     except BaseException:
         shutil.rmtree(job_dir, ignore_errors=True)
         raise
+    if outcome == "queued":
+        wake.set()
+    response.headers["Location"] = f"/v1/jobs/{job_id}"
+    return describe(store.get(job_id))
+
+
+@app.post("/v1/jobs/raw", status_code=202, dependencies=[Depends(check_key)])
+async def create_raw_job(
+        request: Request,
+        response: Response,
+        language: str = Query(DEFAULT_LANGUAGE),
+        original_filename: str = Query("audio.mp3")):
+    """Accept a raw audio stream so native clients avoid Base64/FormData bridges."""
+    content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    if content_type != "application/octet-stream":
+        raise HTTPException(415, "content-type must be application/octet-stream")
+
+    submitted_name = original_filename.replace("\\", "/").rsplit("/", 1)[-1].strip()
+    ext = Path(submitted_name).suffix.lower()
+    if ext not in ALLOWED_EXT:
+        raise HTTPException(415, f"unsupported file type: {ext or '(none)'}")
+
+    job_id = uuid.uuid4().hex
+    job_dir = JOBS_DIR / job_id
+    job_dir.mkdir(parents=True)
+    limit, size = MAX_UPLOAD_MB * 1024 * 1024, 0
+    digest = hashlib.sha256()
+    try:
+        with open(job_dir / f"input{ext}", "wb") as out:
+            async for chunk in request.stream():
+                if not chunk:
+                    continue
+                size += len(chunk)
+                if size > limit:
+                    raise HTTPException(413, f"file exceeds {MAX_UPLOAD_MB} MB")
+                digest.update(chunk)
+                out.write(chunk)
+            if size == 0:
+                raise HTTPException(400, "uploaded file is empty")
+            out.flush()
+            os.fsync(out.fileno())
+
+        duration = probe_duration(job_dir / f"input{ext}")
+        outcome = store.add(
+            job_id, submitted_name, language, size, duration,
+            digest.hexdigest(), recognition_config_key(), MAX_QUEUE)
+        if outcome == "full":
+            raise HTTPException(429, "queue is full, try again later")
+        if outcome == "reused":
+            shutil.rmtree(job_dir, ignore_errors=True)
+    except BaseException:
+        shutil.rmtree(job_dir, ignore_errors=True)
+        raise
+
     if outcome == "queued":
         wake.set()
     response.headers["Location"] = f"/v1/jobs/{job_id}"
