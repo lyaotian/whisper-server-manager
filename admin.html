@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>字幕服务管理</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --card: #ffffff; --text: #1d2129; --muted: #6b7280; --line: #e5e7eb;
+    --ok: #16a34a; --warn: #d97706; --bad: #dc2626; --info: #2563eb; --accent: #2563eb;
+    --bar-bg: #e5e7eb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115; --card: #181b22; --text: #e5e7eb; --muted: #9ca3af; --line: #2a2f3a;
+      --ok: #4ade80; --warn: #fbbf24; --bad: #f87171; --info: #60a5fa; --accent: #60a5fa;
+      --bar-bg: #2a2f3a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Hiragino Sans", "PingFang SC", "Segoe UI", sans-serif; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 16px 20px;
+           max-width: 1200px; margin: 0 auto; }
+  header h1 { font-size: 18px; margin: 0; flex: 1 1 auto; }
+  header .meta { color: var(--muted); font-size: 12px; }
+  button, select { font: inherit; color: var(--text); background: var(--card);
+                   border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  main { padding: 0 20px 32px; max-width: 1200px; margin: 0 auto; }
+  .banner { display: none; margin: 0 0 12px; padding: 8px 12px; border-radius: 6px;
+            background: color-mix(in srgb, var(--bad) 15%, transparent); color: var(--bad); }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  .card h3 { margin: 0 0 6px; font-size: 12px; font-weight: 500; color: var(--muted); }
+  .card .big { font-size: 18px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .card .sub { color: var(--muted); font-size: 12px; margin-top: 2px; word-break: break-all; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); display: inline-block; flex: none; }
+  .dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); } .dot.bad { background: var(--bad); }
+  .counts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; text-align: center; }
+  .counts b { display: block; font-size: 20px; }
+  .counts span { font-size: 12px; color: var(--muted); }
+  .bar { height: 8px; background: var(--bar-bg); border-radius: 4px; overflow: hidden; min-width: 70px; }
+  .bar > i { display: block; height: 100%; background: var(--accent); transition: width .4s; }
+  .bar.indet > i { width: 30% !important; animation: slide 1.2s infinite ease-in-out; }
+  @keyframes slide { 0% { margin-left: -30%; } 100% { margin-left: 100%; } }
+  .tabs { display: flex; gap: 6px; margin: 8px 0; flex-wrap: wrap; }
+  .tabs button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .tablewrap { background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; white-space: nowrap; }
+  th { font-size: 12px; color: var(--muted); font-weight: 500; }
+  tr:last-child td { border-bottom: 0; }
+  td.name { white-space: normal; min-width: 200px; max-width: 360px; word-break: break-all; }
+  .err { color: var(--bad); font-size: 12px; white-space: normal; margin-top: 2px; word-break: break-word; }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px;
+           border: 1px solid currentColor; }
+  .badge.queued { color: var(--muted); } .badge.running { color: var(--info); }
+  .badge.succeeded { color: var(--ok); } .badge.failed { color: var(--bad); }
+  .prog { display: flex; align-items: center; gap: 8px; }
+  .prog .bar { flex: 1; } .prog span { font-size: 12px; min-width: 34px; text-align: right; }
+  a { color: var(--accent); text-decoration: none; margin-right: 8px; }
+  a:hover { text-decoration: underline; }
+  .link-btn { border: 0; background: none; color: var(--bad); padding: 0; }
+  .empty { padding: 24px; text-align: center; color: var(--muted); }
+  details { margin-top: 16px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px 14px; }
+  summary { cursor: pointer; color: var(--muted); }
+  pre { margin: 8px 0 0; max-height: 320px; overflow: auto; font-size: 12px; white-space: pre-wrap; word-break: break-all; }
+  .cfg { color: var(--muted); font-size: 12px; margin-top: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>字幕服务管理</h1>
+  <span class="meta" id="updated"></span>
+  <label class="meta"><input type="checkbox" id="auto" checked> 自动刷新</label>
+  <button id="refresh">刷新</button>
+</header>
+
+<main>
+  <div class="banner" id="banner"></div>
+  <section class="cards" id="cards"></section>
+
+  <div class="tabs" id="tabs"></div>
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr><th>文件</th><th>大小</th><th>音频时长</th><th>状态</th><th>阶段</th><th style="min-width:140px">进度</th>
+            <th>备注</th><th>创建时间</th><th>耗时</th><th>操作</th></tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div class="empty" id="empty" style="display:none">没有任务</div>
+  </div>
+
+  <details>
+    <summary>whisper-server 日志（最近 30 行，已过滤进度行）</summary>
+    <pre id="log">（无）</pre>
+  </details>
+  <div class="cfg" id="cfg"></div>
+</main>
+
+<script>
+"use strict";
+const $ = (s) => document.querySelector(s);
+const STATUS = { queued: "排队中", running: "运行中", succeeded: "成功", failed: "失败" };
+const STAGE = { queued: "排队", preparing: "转换音频", loading_model: "加载模型",
+                transcribing: "转录中", done: "完成" };
+const TABS = [["", "全部"], ["running", "运行中"], ["queued", "排队中"],
+              ["succeeded", "成功"], ["failed", "失败"]];
+let filter = "";
+let timer = null;
+
+// 用 DOM API 构造节点，文件名、错误信息等一律按纯文本处理，避免 XSS
+function el(tag, attrs, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === "class") e.className = v;
+    else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+    else if (v !== null && v !== undefined) e.setAttribute(k, v);
+  }
+  for (const c of kids.flat()) e.append(c instanceof Node ? c : String(c ?? ""));
+  return e;
+}
+const fmtDur = (s) => {
+  if (s === null || s === undefined) return "-";
+  s = Math.max(0, Math.round(s));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60;
+  return h ? `${h}时${m}分${x}秒` : m ? `${m}分${x}秒` : `${x}秒`;
+};
+const fmtTime = (t) => (t ? new Date(t * 1000).toLocaleString() : "-");
+const fmtBytes = (n) => {
+  if (n === null || n === undefined) return "-";
+  const u = ["B", "KB", "MB", "GB", "TB"]; let i = 0;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return `${n.toFixed(i ? 1 : 0)} ${u[i]}`;
+};
+const bar = (pct) => {
+  const indet = pct === null || pct === undefined;
+  return el("div", { class: "bar" + (indet ? " indet" : "") },
+            el("i", { style: `width:${indet ? 30 : pct}%` }));
+};
+
+function card(title, big, sub, dotClass) {
+  return el("div", { class: "card" },
+    el("h3", {}, title),
+    el("div", { class: "big" }, dotClass ? el("span", { class: "dot " + dotClass }) : "", big),
+    sub ? el("div", { class: "sub" }, sub) : "");
+}
+
+function renderCards(d) {
+  const sv = d.service, ws = d.whisper_server, c = d.counts, cards = $("#cards");
+  cards.replaceChildren();
+
+  cards.append(card("API 服务", sv.shutting_down ? "正在关闭" : "运行中",
+                    `已运行 ${fmtDur(sv.uptime)}`, sv.shutting_down ? "warn" : "ok"));
+  cards.append(card("后台 worker", sv.worker_alive ? "正常" : "已停止",
+                    sv.worker_alive ? "按顺序逐个处理任务" : "任务不会被处理，请重启服务",
+                    sv.worker_alive ? "ok" : "bad"));
+
+  const wsText = { up: "在线", busy: "繁忙（处理中）", down: "离线" }[ws.state];
+  const wsDot = { up: "ok", busy: "warn", down: "bad" }[ws.state];
+  cards.append(card("whisper-server", wsText,
+    `${ws.managed ? `由本服务启动，pid ${ws.pid}` : "外部实例或尚未启动"} · ${ws.url}` +
+    ` · ${ws.model}`, wsDot));
+
+  const q = el("div", { class: "card" }, el("h3", {}, "任务统计"),
+    el("div", { class: "counts" },
+      ...[["queued", "排队"], ["running", "运行"], ["succeeded", "成功"], ["failed", "失败"]]
+        .map(([k, l]) => el("div", {}, el("b", {}, c[k]), el("span", {}, l)))),
+    c.queued && d.queued_audio_seconds > 0 ? el("div", { class: "sub", style: "text-align:center;margin-top:6px" },
+                  `排队音频共 ${fmtDur(d.queued_audio_seconds)}`) : "");
+  cards.append(q);
+
+  if (d.current) {
+    const j = d.current;
+    const run = el("div", { class: "card" }, el("h3", {}, "当前任务"),
+      el("div", { class: "big", style: "font-size:14px;word-break:break-all" }, j.filename),
+      el("div", { class: "sub" },
+         `${fmtBytes(j.file_size)} · 音频 ${fmtDur(j.duration)} · ` +
+         `${STAGE[j.stage] || j.stage} · 已用 ${fmtDur(d.now - j.started_at)}` +
+         (j.attempts > 1 ? ` · 第 ${j.attempts} 次尝试` : "")),
+      el("div", { class: "prog", style: "margin-top:6px" }, bar(j.progress),
+         el("span", {}, j.progress === null ? "" : j.progress + "%")));
+    cards.append(run);
+  } else {
+    cards.append(card("当前任务", "空闲", "没有正在运行的任务"));
+  }
+
+  cards.append(card("存储",
+    `剩余 ${fmtBytes(sv.disk_free_bytes)}`,
+    `数据库 ${fmtBytes(sv.db_bytes)} · 成功任务平均耗时 ${sv.avg_duration === null ? "-" : fmtDur(sv.avg_duration)}`));
+
+  const cf = sv.config;
+  $("#cfg").textContent =
+    `默认语言 ${cf.language} · 队列上限 ${cf.max_queue} · 上传上限 ${cf.max_upload_mb} MB · ` +
+    `最多尝试 ${cf.max_attempts} 次 · 结果保留 ${cf.result_ttl_hours} 小时 · ` +
+    `API Key ${cf.api_key_enabled ? "已启用" : "未启用"}`;
+  $("#log").textContent = ws.log_tail ? ws.log_tail : "（无，可能是外部实例或尚未启动）";
+}
+
+function renderTabs(counts) {
+  const tabs = $("#tabs");
+  tabs.replaceChildren(...TABS.map(([k, label]) => {
+    const n = k ? ` (${counts[k]})` : "";
+    return el("button", { class: k === filter ? "active" : "",
+                          onclick: () => { filter = k; load(); } }, label + n);
+  }));
+}
+
+function renderRows(d) {
+  const rows = $("#rows");
+  rows.replaceChildren();
+  $("#empty").style.display = d.jobs.length ? "none" : "block";
+  for (const j of d.jobs) {
+    const end = j.finished_at || (j.status === "running" ? d.now : null);
+    const dur = j.started_at && end ? end - j.started_at : null;
+    // 实时倍率 = 音频时长 / 处理耗时，大于 1 表示比实时播放更快
+    const ratio = j.status === "succeeded" && j.duration && dur
+      ? `（${(j.duration / dur).toFixed(1)}x 实时）` : "";
+    const notes = [];
+    if (j.status === "queued" && j.queue_position) notes.push(`队列第 ${j.queue_position} 位`);
+    if (j.attempts > 1) notes.push(`第 ${j.attempts} 次尝试`);
+
+    const actions = el("td", {});
+    if (j.status === "succeeded") {
+      for (const f of ["lrc", "srt", "vtt"]) {
+        actions.append(el("a", { href: `/admin/api/jobs/${j.id}/result?format=${f}` }, f));
+      }
+    }
+    if (j.status !== "running") {
+      actions.append(el("button", { class: "link-btn", onclick: () => del(j) }, "删除"));
+    }
+
+    rows.append(el("tr", {},
+      el("td", { class: "name", title: j.id }, j.filename,
+         j.error ? el("div", { class: "err" }, j.error) : ""),
+      el("td", {}, fmtBytes(j.file_size)),
+      el("td", {}, fmtDur(j.duration)),
+      el("td", {}, el("span", { class: "badge " + j.status }, STATUS[j.status] || j.status)),
+      el("td", {}, j.status === "failed" ? "-" : (STAGE[j.stage] || j.stage)),
+      el("td", {}, j.progress === null && j.status !== "running" ? "-" :
+         el("div", { class: "prog" }, bar(j.progress),
+            el("span", {}, j.progress === null ? "" : j.progress + "%"))),
+      el("td", {}, notes.join(" · ") || "-"),
+      el("td", {}, fmtTime(j.created_at)),
+      el("td", {}, fmtDur(dur) + ratio),
+      actions));
+  }
+}
+
+async function del(j) {
+  if (!confirm(`删除任务「${j.filename}」？已生成的结果也会一并删除。`)) return;
+  const r = await fetch(`/admin/api/jobs/${j.id}`, { method: "DELETE" });
+  if (!r.ok && r.status !== 404) alert(r.status === 409 ? "运行中的任务不能删除" : `删除失败 (${r.status})`);
+  load();
+}
+
+async function load() {
+  const banner = $("#banner");
+  try {
+    const r = await fetch(`/admin/api/overview?limit=200&status=${encodeURIComponent(filter)}`,
+                          { cache: "no-store" });
+    if (!r.ok) throw new Error(r.status === 403 ? "只允许本机访问后台（见 ADMIN_ALLOW_REMOTE）" : `HTTP ${r.status}`);
+    const d = await r.json();
+    banner.style.display = "none";
+    renderCards(d); renderTabs(d.counts); renderRows(d);
+    $("#updated").textContent = "更新于 " + new Date().toLocaleTimeString();
+  } catch (e) {
+    banner.textContent = "无法获取状态：" + e.message;
+    banner.style.display = "block";
+  }
+}
+
+function schedule() {
+  clearInterval(timer);
+  if ($("#auto").checked && !document.hidden) timer = setInterval(load, 3000);
+}
+$("#refresh").addEventListener("click", load);
+$("#auto").addEventListener("change", schedule);
+document.addEventListener("visibilitychange", () => { schedule(); if (!document.hidden) load(); });
+load(); schedule();
+</script>
+</body>
+</html>
